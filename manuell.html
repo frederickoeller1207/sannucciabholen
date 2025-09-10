@@ -1,1 +1,54 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>abmelden.html</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:0;background:#f4f4f4;color:#111}
+    .wrap{max-width:520px;margin:40px auto;padding:20px;background:#fff;border-radius:12px;box-shadow:0 4px 18px rgba(0,0,0,.08)}
+    h1{font-size:18px;margin:0 0 12px}
+    label{display:block;font-size:14px;margin:8px 0}
+    input{width:100%;padding:12px 14px;font-size:16px;border:1px solid #cbd5e1;border-radius:10px;outline:none}
+    input:focus{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.15)}
+    button{margin-top:12px;width:100%;padding:12px 14px;font-size:16px;border:0;border-radius:10px;background:#2563eb;color:#fff;cursor:pointer}
+    button:active{transform:translateY(1px)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Wer soll abgemeldet werden?</h1>
+    <form id="f">
+      <label for="name">Name eingeben</label>
+      <input id="name" type="text" autocomplete="off" />
+      <button type="submit">Abmelden</button>
+    </form>
+  </div>
 
+  <script>
+    // Öffnet die Index-Seite im selben Ordner. Kein fester Domain-Name nötig.
+    const BASE = "index.html?child=";
+
+    function normalizeName(raw){
+      if(!raw) return "";
+      let s = String(raw).replace(/\s+/g,"");
+      s = s.toLowerCase();
+      return s.length ? s[0].toUpperCase() + s.slice(1) : "";
+    }
+
+    document.getElementById("f").addEventListener("submit", function(e){
+      e.preventDefault();
+      const input = document.getElementById("name");
+      const name = normalizeName(input.value);
+      if(!name){
+        alert("Bitte einen Namen eingeben.");
+        input.focus();
+        return;
+      }
+      // Admin=1 erlaubt frühe Abmeldung wie zuvor.
+      const url = BASE + encodeURIComponent(name) + "&admin=1";
+      window.location.href = url;
+    });
+  </script>
+</body>
+</html>
