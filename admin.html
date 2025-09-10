@@ -1,1 +1,190 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Abholsystem – Admin</title>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+<style>
+  body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:0;background:#f0f4f8;color:#1a202c}
+  .wrap{max-width:800px;margin:0 auto;padding:20px}
+  h1{margin:10px 0;text-align:center}
+  h2{margin-top:0;font-size:18px}
+  .card{background:#fff;border-radius:10px;padding:16px;margin:12px 0;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+  input,select{padding:10px;border:1px solid #cbd5e0;border-radius:8px;font-size:15px}
+  button{padding:10px 14px;border:0;border-radius:8px;background:#4299e1;color:#fff;cursor:pointer}
+  button:hover{background:#3182ce}
+  .danger{background:#e53e3e}
+  .danger:hover{background:#c53030}
+  ul{list-style:none;padding:0;margin:0}
+  li{padding:6px 0;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #eee}
+  .muted{color:#64748b;font-size:14px}
+  .spacer{height:28px;background:#fff;border-radius:10px;margin:16px 0;box-shadow:0 1px 4px rgba(0,0,0,.04)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Admin – Abholsystem</h1>
 
+  <!-- 1) Einmalige Zeit setzen -->
+  <div class="card" id="onetime-card">
+    <h2>Einmalige Zeit setzen</h2>
+    <div class="grid">
+      <select id="otChild"></select>
+      <input id="otDate" type="date">
+    </div>
+    <div class="grid">
+      <input id="otTime" type="time">
+      <button id="otSave">Speichern</button>
+    </div>
+    <div class="muted">Gilt nur für das ausgewählte Datum. Überschreibt an diesem Tag die Basiszeit.</div>
+  </div>
+
+  <div class="spacer" aria-hidden="true"></div>
+
+  <!-- 2) Kind hinzufügen -->
+  <div class="card" id="add-card">
+    <h2>Kind hinzufügen</h2>
+    <div class="grid">
+      <input id="newChild" placeholder="Name des Kindes">
+      <button id="addChildBtn">Hinzufügen</button>
+    </div>
+    <div class="muted">Name exakt wie im Link verwenden (Groß-/Kleinschreibung beachten).</div>
+  </div>
+
+  <!-- 3) Basis-Abholzeit ändern -->
+  <div class="card" id="base-card">
+    <h2>Basis-Abholzeit ändern</h2>
+    <div class="grid">
+      <select id="admChild"></select>
+      <select id="admDay">
+        <option>Montag</option><option>Dienstag</option><option>Mittwoch</option>
+        <option>Donnerstag</option><option>Freitag</option>
+      </select>
+    </div>
+    <div class="grid">
+      <input id="admTime" type="time">
+      <button id="admSave">Speichern</button>
+    </div>
+  </div>
+
+  <!-- 4) Kinder löschen -->
+  <div class="card" id="delete-card">
+    <h2>Kinder löschen</h2>
+    <ul id="childList"></ul>
+  </div>
+
+  <div id="adminInfo" class="muted"></div>
+</div>
+
+<script>
+  // >>> Neue Firebase-Konfiguration <<<
+  const firebaseConfig = {
+    apiKey: "AIzaSyDpZRi26CR2l8eL3njC88_Exc_FNgGoThg",
+    authDomain: "sannucciabholen.firebaseapp.com",
+    databaseURL: "https://sannucciabholen-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "sannucciabholen",
+    storageBucket: "sannucciabholen.firebasestorage.app",
+    messagingSenderId: "498711981733",
+    appId: "1:498711981733:web:e7b99ee43e125b82fa274c"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  const qs = s=>document.querySelector(s);
+  const DAYS = ["Montag","Dienstag","Mittwoch","Donnerstag","Freitag"];
+
+  const admChild=qs('#admChild'), admDay=qs('#admDay'), admTime=qs('#admTime');
+  const otChild=qs('#otChild'), otDate=qs('#otDate'), otTime=qs('#otTime');
+  const childList=qs('#childList'), info=qs('#adminInfo');
+
+  let allChildren=new Set();
+
+  async function loadChildren(){
+    childList.innerHTML='Lade…';
+    const snap=await db.ref().once('value');
+    const data=snap.val()||{};
+    const set=new Set();
+    DAYS.forEach(d=>{
+      if(data[d] && typeof data[d]==='object'){
+        Object.keys(data[d]).forEach(n=>set.add(n));
+      }
+    });
+    allChildren=set;
+    renderChildSelects();
+    renderChildList();
+  }
+
+  function renderChildSelects(){
+    const opts=Array.from(allChildren).sort().map(n=>`<option>${n}</option>`).join('');
+    admChild.innerHTML=opts;
+    otChild.innerHTML=opts;
+  }
+
+  function renderChildList(){
+    childList.innerHTML='';
+    Array.from(allChildren).sort().forEach(n=>{
+      const li=document.createElement('li');
+      li.textContent=n;
+      const btn=document.createElement('button');
+      btn.textContent='Löschen';
+      btn.className='danger';
+      btn.onclick=()=>deleteChild(n);
+      li.appendChild(btn);
+      childList.appendChild(li);
+    });
+  }
+
+  // Kind hinzufügen
+  qs('#addChildBtn').onclick=async()=>{
+    const name=qs('#newChild').value.trim();
+    if(!name){info.textContent='Bitte Namen eingeben.';return;}
+    if (/[.\$\#\[\]\/]/.test(name)){ info.textContent='Ungültige Zeichen im Namen (. $ # [ ] /)'; return; }
+    info.textContent='Speichere…';
+    try{
+      const updates={};
+      DAYS.forEach(day=>{ updates[`${day}/${name}`] = ""; });
+      await db.ref().update(updates);
+      info.textContent='Kind hinzugefügt.';
+      qs('#newChild').value='';
+      loadChildren();
+    }catch(e){info.textContent='Fehler beim Hinzufügen.';}
+  };
+
+  // Basiszeit setzen
+  qs('#admSave').onclick=async()=>{
+    const name=admChild.value, day=admDay.value, time=admTime.value;
+    if(!name||!day||!time){info.textContent='Bitte alle Felder füllen.';return;}
+    info.textContent='Speichere…';
+    try{await db.ref(`${day}/${name}`).set(time); info.textContent='Basiszeit gespeichert.';}
+    catch(e){info.textContent='Fehler beim Speichern.';}
+  };
+
+  // Einmalige Zeit setzen
+  qs('#otSave').onclick=async()=>{
+    const name=otChild.value, date=otDate.value, time=otTime.value;
+    if(!name||!date||!time){info.textContent='Bitte alle Felder füllen.';return;}
+    info.textContent='Speichere…';
+    try{await db.ref(`onetime/${date}/${name}`).set(time); info.textContent='Einmalige Zeit gespeichert.';}
+    catch(e){info.textContent='Fehler beim Speichern.';}
+  };
+
+  // Kind löschen
+  async function deleteChild(name){
+    if(!confirm(`„${name}“ wirklich löschen?`)) return;
+    info.textContent='Lösche…';
+    try{
+      const updates={};
+      DAYS.forEach(day=>{ updates[`${day}/${name}`]=null; });
+      await db.ref().update(updates);
+      info.textContent='Kind gelöscht.';
+      loadChildren();
+    }catch(e){info.textContent='Fehler beim Löschen.';}
+  }
+
+  document.addEventListener('DOMContentLoaded',loadChildren);
+</script>
+</body>
+</html>
