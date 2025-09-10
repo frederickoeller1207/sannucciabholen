@@ -1,1 +1,209 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Abholsystem – Tagesansicht</title>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.0/firebase-database.js"></script>
+<style>
+  :root{--fg:#1a202c;--muted:#64748b;--accent:#4299e1;--bg:#f0f4f8;--white:#fff}
+  body{font-family:system-ui,Segoe UI,Arial,sans-serif;margin:0;background:var(--bg);color:var(--fg)}
+  .wrap{max-width:780px;margin:0 auto;padding:16px}
+  h1{margin:10px 0;text-align:center;font-size:22px}
+  .row{display:flex;gap:8px;justify-content:center;margin:8px 0}
+  button{padding:9px 14px;border:0;border-radius:999px;background:var(--accent);color:#fff;cursor:pointer}
+  button.secondary{background:#64748b}
+  #info{text-align:center;margin:6px 0;color:#475569}
+  .slot{background:var(--white);border-radius:10px;padding:10px 12px;margin:10px 0;box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .slot h2{margin:0 0 8px 0;font-size:16px}
+  .names{list-style:none;margin:0;padding:0}
+  .names li{padding:4px 0;font-size:16px;line-height:1.35}
+  .strike{text-decoration:line-through;color:#e53e3e}
+  .onetime{color:#f6e05e}
+  .modal{display:none;position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.4);justify-content:center;align-items:center}
+  .box{background:#fff;padding:16px;border-radius:10px;width:min(92vw,520px)}
+  .days{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:8px}
+  .days button{background:#e2e8f0;color:#334155}
+  .days button.active{background:#38a169;color:#fff}
+  #link-view{display:none;min-height:50vh;display:flex;align-items:center;justify-content:center;}
+  #link-msg{background:#fff;padding:22px 26px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.08);font-size:20px;text-align:center;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1 id="title">Tagesansicht</h1>
+  <div class="row">
+    <button id="chooseDayBtn" class="secondary">Wochentag wählen</button>
+    <button id="manualBtn" class="secondary">Manuell abmelden</button>
+    <button id="adminLinkBtn">Abholzeit anpassen</button>
+  </div>
+  <div id="info">Lade…</div>
+  <div id="slots"></div>
+  <div id="link-view"><div id="link-msg"></div></div>
+</div>
 
+<div id="dayModal" class="modal"><div class="box">
+  <h3>Wochentag auswählen</h3>
+  <div id="dayBtns" class="days"></div>
+  <div class="row" style="margin-top:10px"><button id="closeDay" class="secondary">Schließen</button></div>
+</div></div>
+
+<script>
+  // >>> Neue Firebase-Konfiguration <<<
+  const firebaseConfig = {
+    apiKey: "AIzaSyDpZRi26CR2l8eL3njC88_Exc_FNgGoThg",
+    authDomain: "sannucciabholen.firebaseapp.com",
+    databaseURL: "https://sannucciabholen-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "sannucciabholen",
+    storageBucket: "sannucciabholen.firebasestorage.app",
+    messagingSenderId: "498711981733",
+    appId: "1:498711981733:web:e7b99ee43e125b82fa274c"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const db = firebase.database();
+
+  function berlinParts(d=new Date()){
+    const fmt = new Intl.DateTimeFormat('de-DE',{timeZone:'Europe/Berlin',hour12:false,
+      year:'numeric',month:'2-digit',day:'2-digit',
+      hour:'2-digit',minute:'2-digit',weekday:'long'});
+    const parts = fmt.formatToParts(d); const get=t=>parts.find(p=>p.type===t)?.value;
+    return {y:Number(get('year')), m:get('month'), d:get('day'),
+            h:Number(get('hour')), min:Number(get('minute')), weekday:get('weekday')};
+  }
+  function dateKey(){ const p=berlinParts(); return `${p.y}-${p.m}-${p.d}`; }
+  function todayName(){ const w=berlinParts().weekday; return w.charAt(0).toUpperCase()+w.slice(1); }
+  function nowMinutes(){ const p=berlinParts(); return p.h*60+p.min; }
+  function parseHHMM(s){ if(!s||!/^\d{2}:\d{2}$/.test(s)) return null; const [h,m]=s.split(':').map(Number); return h*60+m; }
+
+  const SCHOOL=["Montag","Dienstag","Mittwoch","Donnerstag","Freitag"];
+  const qs = s=>document.querySelector(s);
+
+  let currentDay=todayName();
+  const params=new URLSearchParams(location.search);
+  const linkChild=params.get('child');
+  const isAdmin=params.get('admin')==='1';
+
+  const titleEl=qs('#title'), infoEl=qs('#info'), slotsEl=qs('#slots');
+
+  qs('#chooseDayBtn').onclick=()=>openDayModal();
+  qs('#closeDay').onclick=()=>qs('#dayModal').style.display='none';
+  qs('#manualBtn').onclick=()=>{ location.href='manuell.html'; };
+  qs('#adminLinkBtn').onclick=()=>{ location.href='admin.html'; };
+
+  function openDayModal(){
+    const c=qs('#dayBtns'); c.innerHTML='';
+    SCHOOL.forEach(d=>{
+      const b=document.createElement('button');
+      b.textContent=d;
+      if(d===currentDay) b.classList.add('active');
+      b.onclick=()=>{ currentDay=d; qs('#dayModal').style.display='none'; loadDay(); };
+      c.appendChild(b);
+    });
+    qs('#dayModal').style.display='flex';
+  }
+
+  function enterLinkMode(msg){
+    document.getElementById('link-msg').textContent=msg;
+    document.getElementById('link-view').style.display='flex';
+    document.getElementById('slots').style.display='none';
+    document.getElementById('chooseDayBtn').style.display='none';
+    document.getElementById('adminLinkBtn').style.display='none';
+    document.getElementById('manualBtn').style.display='none';
+    history.pushState(null,'',location.href);
+    window.addEventListener('popstate',()=>{ history.pushState(null,'',location.href); });
+  }
+
+  async function loadDay(){
+    titleEl.textContent=`Heute: ${currentDay}`;
+    if(!SCHOOL.includes(currentDay)){ infoEl.textContent='Kein OGS-Tag. Nur Mo–Fr.'; slotsEl.innerHTML=''; return; }
+    infoEl.textContent='Lade…'; slotsEl.innerHTML='';
+
+    try{
+      const timesSnap=await db.ref(currentDay).once('value');
+      const times=timesSnap.val()||{};
+
+      if(linkChild){
+        const statusNow=(await db.ref(`abmeldungen/${dateKey()}`).once('value')).val()||{};
+        const msg=await tryAutoCheckout(times,statusNow);
+        enterLinkMode(msg);
+        return;
+      }
+
+      const isTodaySelected=(currentDay===todayName());
+      let status={}, onetime={};
+      if(isTodaySelected){
+        [status,onetime]=await Promise.all([
+          db.ref(`abmeldungen/${dateKey()}`).once('value').then(s=>s.val()||{}),
+          db.ref(`onetime/${dateKey()}`).once('value').then(s=>s.val()||{})
+        ]);
+      }
+
+      const rows=Object.entries(times).map(([name,baseTime])=>{
+        const finalTime=(isTodaySelected && onetime[name]) ? onetime[name] : (baseTime||null);
+        const isOnetime=isTodaySelected && !!onetime[name];
+        const strike=isTodaySelected && !!status[name];
+        return {name, finalTime, isOnetime, strike};
+      });
+
+      const groups={};
+      rows.forEach(r=>{ const t=r.finalTime||'—'; (groups[t] ||= []).push(r); });
+
+      const sortedTimes=Object.keys(groups).sort((a,b)=>{
+        const am=parseHHMM(a), bm=parseHHMM(b);
+        if(am===null && bm===null) return 0;
+        if(am===null) return 1;
+        if(bm===null) return -1;
+        return am-bm;
+      });
+
+      if(sortedTimes.length===0){ infoEl.textContent='Keine Einträge für heute.'; return; }
+
+      sortedTimes.forEach(t=>{
+        const slot=document.createElement('div'); slot.className='slot';
+        slot.innerHTML=`<h2>${t==='—'?'ohne Zeit':t+' Uhr'}</h2><ul class="names"></ul>`;
+        const ul=slot.querySelector('.names');
+        groups[t].sort((a,b)=>a.name.localeCompare(b.name,'de')).forEach(r=>{
+          const li=document.createElement('li');
+          if(r.strike) li.classList.add('strike');
+          if(r.isOnetime) li.classList.add('onetime');
+          li.textContent=r.name;
+          ul.appendChild(li);
+        });
+        slotsEl.appendChild(slot);
+      });
+
+      infoEl.textContent='Fertig.';
+    }catch(e){
+      infoEl.textContent='Fehler beim Laden. Regeln/Verbindung prüfen.';
+    }
+  }
+
+  async function tryAutoCheckout(times,status){
+    const name=linkChild;
+    const setRef=firebase.database().ref(`abmeldungen/${dateKey()}/${name}`);
+
+    if(!times || !times[name]) return `Unbekanntes Kind: ${name}`;
+    if(status && status[name]) return `${name}: bereits abgemeldet.`;
+
+    const otSnap=await firebase.database().ref(`onetime/${dateKey()}/${name}`).once('value');
+    const specialTime=otSnap.val();
+
+    const baseTime=String(times[name]);
+    const t=specialTime || baseTime;
+    const target=parseHHMM(t);
+    const allowedFrom=target!==null ? target-2 : null;
+
+    if(isAdmin || allowedFrom===null || nowMinutes()>=allowedFrom){
+      try{ await setRef.set(true); return `${name}: erfolgreich abgemeldet.`; }
+      catch{ return `${name}: Abmeldung fehlgeschlagen.`; }
+    }else{
+      const wait=Math.max(0, allowedFrom-nowMinutes());
+      return `${name}: bitte noch ${wait} Min warten.`;
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded',loadDay);
+</script>
+</body>
+</html>
